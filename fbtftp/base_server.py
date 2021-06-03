@@ -205,8 +205,8 @@ class BaseServer:
         self._listener = socket.socket(self._family, socket.SOCK_DGRAM)
         self._listener.setblocking(0)  # non-blocking
         self._listener.bind((address, port))
-        self._epoll = select.epoll()
-        self._epoll.register(self._listener.fileno(), select.EPOLLIN)
+        self._kqueue = select.kqueue()
+        self._events = [select.kevent(self._listener, select.KQ_FILTER_READ, select.KQ_EV_ADD|select.KQ_EV_ENABLE)]
         self._should_stop = False
         self._server_stats = ServerStats(address, stats_interval_seconds)
         self._metrics_timer = None
@@ -226,7 +226,7 @@ class BaseServer:
             self.run_once()
             if run_once:
                 break
-        self._epoll.close()
+        self._kqueue.close()
         self._listener.close()
         if self._metrics_timer is not None:
             self._metrics_timer.cancel()
@@ -271,11 +271,11 @@ class BaseServer:
         facility to know when data is ready to be retrived from the listening
         socket. See http://linux.die.net/man/4/epoll .
         """
-        events = self._epoll.poll()
-        for fileno, eventmask in events:
-            if not eventmask & select.EPOLLIN:
+        events = self._kqueue.control(self._events, 1, None)
+        for event in events:
+            if not event.filter & select.KQ_FILTER_READ:
                 continue
-            if fileno == self._listener.fileno():
+            if event.ident == self._listener.fileno():
                 self.on_new_data()
                 continue
 
